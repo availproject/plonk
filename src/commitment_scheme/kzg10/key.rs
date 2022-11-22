@@ -152,19 +152,18 @@ impl CommitKey {
         }
     }
 
-    /// Checks whether the polynomial we are committing to:
-    /// - Has zero degree
-    /// - Has a degree which is more than the max supported degree
+    /// Checks whether the polynomial we are committing to
+    /// has a degree which is more than the max supported degree
     ///
-    /// Returns an error if any of the above conditions are true.
-    fn check_commit_degree_is_within_bounds(
+    /// Returns an error if the degree is over the limit.
+    fn check_commit_degree_is_below_max(
         &self,
         poly_degree: usize,
     ) -> Result<(), Error> {
-        match (poly_degree == 0, poly_degree > self.max_degree()) {
-            (true, _) => Err(Error::PolynomialDegreeIsZero),
-            (false, true) => Err(Error::PolynomialDegreeTooLarge),
-            (false, false) => Ok(()),
+        if poly_degree > self.max_degree() {
+            Err(Error::PolynomialDegreeTooLarge)
+        } else {
+            Ok(())
         }
     }
 
@@ -174,7 +173,7 @@ impl CommitKey {
     /// of the commit key.
     pub fn commit(&self, polynomial: &Polynomial) -> Result<Commitment, Error> {
         // Check whether we can safely commit to this polynomial
-        self.check_commit_degree_is_within_bounds(polynomial.degree())?;
+        self.check_commit_degree_is_below_max(polynomial.degree())?;
 
         // Compute commitment
         Ok(Commitment::from(msm_variable_base(
@@ -457,6 +456,35 @@ mod test {
     fn setup_test(degree: usize) -> Result<(CommitKey, OpeningKey), Error> {
         let srs = PublicParameters::setup(degree, &mut OsRng)?;
         srs.trim(degree)
+    }
+    #[test]
+    fn test_zero_degree() -> Result<(), Error> {
+        let degree = 0;
+        let (ck, opening_key) = setup_test(2)?;
+        let point = BlsScalar::from(10);
+
+        let poly = Polynomial::rand(degree, &mut OsRng);
+        let value = poly.evaluate(&point);
+
+        let proof = open_single(&ck, &poly, &value, &point)?;
+
+        let ok = check(&opening_key, point, proof);
+        assert!(ok);
+        Ok(())
+    }
+    #[test]
+    fn test_zero_coeff_poly() -> Result<(), Error> {
+        let (ck, opening_key) = setup_test(2)?;
+        let point = BlsScalar::from(10);
+
+        let poly = Polynomial { coeffs: vec![] };
+        let value = poly.evaluate(&point);
+
+        let proof = open_single(&ck, &poly, &value, &point)?;
+
+        let ok = check(&opening_key, point, proof);
+        assert!(ok);
+        Ok(())
     }
     #[test]
     fn test_basic_commit() -> Result<(), Error> {
