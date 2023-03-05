@@ -15,7 +15,7 @@ if #[cfg(feature = "alloc")]
     pub(crate) mod polynomial;
 
     pub use evaluations::Evaluations;
-    pub(crate) use polynomial::Polynomial;
+    pub use polynomial::Polynomial;
 });
 
 pub mod domain;
