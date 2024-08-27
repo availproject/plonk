@@ -457,6 +457,79 @@ mod test {
         let srs = PublicParameters::setup(degree, &mut OsRng)?;
         srs.trim(degree)
     }
+
+    // creates serialised_pp from pre-generated g1 & g2 points
+    fn get_public_params() -> std::io::Result<PublicParameters> {
+        let (g1s, g2s) = load_trusted_g1_g2();
+        let okey = OpeningKey {
+            g: g1s[0],
+            h: g2s[0],
+            beta_h: g2s[1],
+            prepared_h: G2Prepared::from(g2s[0]),
+            prepared_beta_h: G2Prepared::from(g2s[1]),
+        };
+        let ckey = CommitKey { powers_of_g: g1s };
+        let pp = PublicParameters {
+            commit_key: ckey,
+            opening_key: okey,
+        };
+        Ok(pp)
+    }
+
+    // Loads the pre-generated trusted g1 & g2 from the file
+    fn load_trusted_g1_g2() -> (Vec<G1Affine>, Vec<G2Affine>) {
+        // for degree = 1024
+        let contents = include_str!("g1_g2_1024.txt");
+        let mut lines = contents.lines();
+        let g1_len: usize = lines.next().unwrap().parse().unwrap();
+        let g2_len: usize = lines.next().unwrap().parse().unwrap();
+
+        let g1_bytes: Vec<[u8; 48]> = lines
+            .by_ref()
+            .take(g1_len)
+            .map(|line| hex::decode(line).unwrap().try_into().unwrap())
+            .collect();
+
+        let g2_bytes: Vec<[u8; 96]> = lines
+            .take(g2_len)
+            .map(|line| hex::decode(line).unwrap().try_into().unwrap())
+            .collect();
+
+        let g1: Vec<G1Affine> = g1_bytes
+            .iter()
+            .map(|bytes| G1Affine::from_bytes(&bytes).unwrap())
+            .collect();
+
+        let g2: Vec<G2Affine> = g2_bytes
+            .iter()
+            .map(|bytes| G2Affine::from_bytes(&bytes).unwrap())
+            .collect();
+
+        (g1, g2)
+    }
+
+    #[test]
+    fn test_pp() -> Result<(), Error> {
+        use std::fs::File;
+        use std::io::Write;
+        let pp = get_public_params().unwrap();
+        let pp_bytes = pp.to_var_bytes();
+        let mut pp_file = File::create(format!("pp_{}_2.data", 1024)).unwrap();
+        pp_file.write_all(&pp_bytes).unwrap();
+        let point = BlsScalar::from(10);
+        
+        // Checking with the highest degree; ideally, any degree up to the highest should be acceptable.
+        let max_degree = pp.max_degree();
+        let poly = Polynomial::rand(max_degree, &mut OsRng);
+        let value = poly.evaluate(&point);
+
+        let proof = open_single(&pp.commit_key, &poly, &value, &point)?;
+
+        let ok = check(&pp.opening_key, point, proof);
+        assert!(ok);
+        Ok(())
+    }
+
     #[test]
     fn test_zero_degree() -> Result<(), Error> {
         let degree = 0;
@@ -486,10 +559,14 @@ mod test {
         assert!(ok);
         Ok(())
     }
+
     #[test]
     fn test_basic_commit() -> Result<(), Error> {
-        let degree = 25;
-        let (ck, opening_key) = setup_test(degree)?;
+        let pp_bytes = include_bytes!("pp_1024_2.data");
+        let pp = PublicParameters::from_slice(pp_bytes)
+            .expect("Deserialization should work");
+        let degree: usize = 1000;
+        let (ck, opening_key) = pp.trim(degree).unwrap();
         let point = BlsScalar::from(10);
 
         let poly = Polynomial::rand(degree, &mut OsRng);
@@ -501,6 +578,7 @@ mod test {
         assert!(ok);
         Ok(())
     }
+
     #[test]
     fn test_batch_verification() -> Result<(), Error> {
         let degree = 25;
